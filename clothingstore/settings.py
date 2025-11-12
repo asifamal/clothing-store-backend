@@ -164,6 +164,11 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # Custom User Model
 AUTH_USER_MODEL = 'users.User'
+# Email configuration: use console backend in development so OTPs are printed to the backend console.
+# For production, override EMAIL_BACKEND and SMTP credentials via environment variables.
+EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+DEFAULT_FROM_EMAIL = 'no-reply@notedstore.com'
+
 
 # JWT Settings
 from datetime import timedelta
