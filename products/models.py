@@ -55,3 +55,55 @@ class ProductVariant(models.Model):
     
     def __str__(self):
         return f"{self.product.name} - {self.size}"
+
+
+class CategoryAttribute(models.Model):
+    """Define category-specific attributes like sleeve length, fit type, etc."""
+    ATTRIBUTE_TYPES = [
+        ('text', 'Text'),
+        ('number', 'Number'),
+        ('select', 'Dropdown Selection'),
+        ('multiselect', 'Multiple Selection'),
+    ]
+    
+    category = models.ForeignKey(Category, on_delete=models.CASCADE, related_name='attributes')
+    name = models.CharField(max_length=100)  # e.g., "Sleeve Length", "Fit Type"
+    attribute_type = models.CharField(max_length=20, choices=ATTRIBUTE_TYPES)
+    is_required = models.BooleanField(default=False)
+    is_filterable = models.BooleanField(default=True)  # Can be used as filter on frontend
+    display_order = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        unique_together = ['category', 'name']
+        ordering = ['display_order', 'name']
+    
+    def __str__(self):
+        return f"{self.category.name} - {self.name}"
+
+
+class CategoryAttributeOption(models.Model):
+    """Predefined options for select/multiselect attributes"""
+    attribute = models.ForeignKey(CategoryAttribute, on_delete=models.CASCADE, related_name='options')
+    value = models.CharField(max_length=100)  # e.g., "Long Sleeve", "Short Sleeve"
+    display_order = models.PositiveIntegerField(default=0)
+    
+    class Meta:
+        unique_together = ['attribute', 'value']
+        ordering = ['display_order', 'value']
+    
+    def __str__(self):
+        return f"{self.attribute.name}: {self.value}"
+
+
+class ProductAttribute(models.Model):
+    """Store actual attribute values for products"""
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='attributes')
+    category_attribute = models.ForeignKey(CategoryAttribute, on_delete=models.CASCADE)
+    value = models.TextField()  # Store value as text (can be JSON for multiselect)
+    
+    class Meta:
+        unique_together = ['product', 'category_attribute']
+    
+    def __str__(self):
+        return f"{self.product.name} - {self.category_attribute.name}: {self.value}"

@@ -16,21 +16,103 @@ class ProductsView(View):
         limit = int(request.GET.get('limit', 10))
         category_id = request.GET.get('category_id')
         search = request.GET.get('search')
+        min_price = request.GET.get('min_price')
+        max_price = request.GET.get('max_price')
         
-        products = Product.objects.select_related('category').all()
+        products = Product.objects.select_related('category').prefetch_related('attributes__category_attribute').all()
+        
+        # Category filtering
         if category_id:
             products = products.filter(category_id=category_id)
+        
+        # Search filtering
         if search:
             products = products.filter(
                 Q(name__icontains=search) | Q(description__icontains=search)
             )
+        
+        # Price filtering
+        if min_price:
+            try:
+                min_price_val = float(min_price)
+                products = products.filter(price__gte=min_price_val)
+            except (ValueError, TypeError):
+                pass  # Invalid price, ignore filter
+        
+        if max_price:
+            try:
+                max_price_val = float(max_price)
+                products = products.filter(price__lte=max_price_val)
+            except (ValueError, TypeError):
+                pass  # Invalid price, ignore filter
+        
+        # Attribute filtering (e.g., ?attr_1=Long Sleeve&attr_2=Cotton&attr_3=10-50)
+        attribute_filters = {}
+        for key, value in request.GET.items():
+            if key.startswith('attr_') and value.strip():  # Only process non-empty values
+                attr_id = key.replace('attr_', '')
+                try:
+                    attr_id = int(attr_id)
+                    attribute_filters[attr_id] = value.strip()
+                except ValueError:
+                    continue
+        
+        # Apply attribute filters
+        for attr_id, attr_value in attribute_filters.items():
+            from .models import CategoryAttribute
+            try:
+                attr_obj = CategoryAttribute.objects.get(id=attr_id)
+                
+                if attr_obj.attribute_type == 'number' and '-' in attr_value:
+                    # Handle number range filtering (e.g., "10-50")
+                    try:
+                        min_val, max_val = attr_value.split('-')
+                        min_val = float(min_val) if min_val else 0
+                        max_val = float(max_val) if max_val != '999999' else 999999999
+                        
+                        # Filter products where the attribute value is within the range
+                        products = products.filter(
+                            attributes__category_attribute_id=attr_id,
+                            attributes__value__regex=r'^[0-9]+(\.[0-9]+)?$'  # Ensure it's a number
+                        ).extra(
+                            where=[
+                                "CAST(products_productattribute.value AS DECIMAL(10,2)) BETWEEN %s AND %s"
+                            ],
+                            params=[min_val, max_val]
+                        )
+                    except (ValueError, IndexError):
+                        # If range parsing fails, treat as regular text search
+                        products = products.filter(
+                            attributes__category_attribute_id=attr_id,
+                            attributes__value__icontains=attr_value
+                        )
+                else:
+                    # Regular text/select filtering with case-insensitive search
+                    products = products.filter(
+                        attributes__category_attribute_id=attr_id,
+                        attributes__value__icontains=attr_value
+                    )
+            except CategoryAttribute.DoesNotExist:
+                continue
+        
         paginator = Paginator(products, limit)
         try:
             page_obj = paginator.page(page)
         except:
             page_obj = paginator.page(1)
+        
         products_data = []
         for product in page_obj:
+            # Include product attributes in response
+            product_attributes = []
+            for prod_attr in product.attributes.all():
+                product_attributes.append({
+                    'id': prod_attr.category_attribute.id,
+                    'name': prod_attr.category_attribute.name,
+                    'value': prod_attr.value,
+                    'field_type': prod_attr.category_attribute.attribute_type
+                })
+            
             products_data.append({
                 'id': product.id,
                 'name': product.name,
@@ -42,8 +124,10 @@ class ProductsView(View):
                     'name': product.category.name
                 },
                 'image': product.image.url if product.image else None,
+                'attributes': product_attributes,
                 'created_at': product.created_at.isoformat(),
             })
+        
         return JsonResponse({
             'status': 'success',
             'data': {
@@ -173,7 +257,7 @@ class ProductDetailView(View):
     def get(self, request, product_id):
         """Public GET endpoint to fetch product details"""
         try:
-            product = Product.objects.prefetch_related('variants').get(id=product_id)
+            product = Product.objects.prefetch_related('variants', 'attributes__category_attribute').get(id=product_id)
             
             # Get variants data
             variants_data = []
@@ -182,6 +266,14 @@ class ProductDetailView(View):
                     'id': variant.id,
                     'size': variant.size,
                     'stock': variant.stock,
+                })
+            
+            # Get attributes data
+            attributes_data = []
+            for attr in product.attributes.all():
+                attributes_data.append({
+                    'name': attr.category_attribute.name,
+                    'value': attr.value,
                 })
             
             return JsonResponse({
@@ -198,6 +290,7 @@ class ProductDetailView(View):
                     } if product.category else None,
                     'image': product.image.url if product.image else None,
                     'variants': variants_data,
+                    'attributes': attributes_data,
                     'created_at': product.created_at.isoformat(),
                     'updated_at': product.updated_at.isoformat(),
                 }
@@ -318,3 +411,36 @@ class CategoriesView(View):
                 'categories': categories_data
             }
         })
+
+
+class CategoryAttributesView(View):
+    """GET: public endpoint to get category attributes for filtering"""
+    def get(self, request, category_id):
+        try:
+            from .models import CategoryAttribute, CategoryAttributeOption
+            
+            # Check if category exists
+            if not Category.objects.filter(id=category_id).exists():
+                return JsonResponse({'status': 'error', 'message': 'Category not found'}, status=404)
+            
+            attributes = CategoryAttribute.objects.filter(category_id=category_id).prefetch_related('options')
+            attributes_data = []
+            
+            for attr in attributes:
+                attr_data = {
+                    'id': attr.id,
+                    'name': attr.name,
+                    'field_type': attr.attribute_type,
+                    'is_required': attr.is_required,
+                    'options': [{'id': opt.id, 'value': opt.value} for opt in attr.options.all()]
+                }
+                attributes_data.append(attr_data)
+            
+            return JsonResponse({
+                'status': 'success',
+                'data': {
+                    'attributes': attributes_data
+                }
+            })
+        except Exception as e:
+            return JsonResponse({'status': 'error', 'message': str(e)}, status=400)

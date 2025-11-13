@@ -853,6 +853,15 @@ class AdminProductsDetailView(View):
                 'stock': variant.stock,
             })
 
+        # Get attributes data
+        attributes_data = []
+        for attr in product.attributes.all():
+            attributes_data.append({
+                'id': attr.category_attribute.id,
+                'name': attr.category_attribute.name,
+                'value': attr.value,
+            })
+
         return JsonResponse({
             'status': 'success',
             'data': {
@@ -865,6 +874,7 @@ class AdminProductsDetailView(View):
                 'category_name': product.category.name if product.category else None,
                 'image': product.image.url if product.image else None,
                 'variants': variants_data,
+                'attributes': attributes_data,
                 'created_at': product.created_at.isoformat(),
             }
         })
@@ -915,6 +925,24 @@ class AdminProductsDetailView(View):
             product.image = request.FILES['image']
 
         product.save()
+
+        # Handle attributes update
+        from products.models import ProductAttribute, CategoryAttribute
+        if request.content_type and 'multipart/form-data' in request.content_type:
+            # Update attributes from form data
+            for key, value in request.POST.items():
+                if key.startswith('attr_') and value.strip():
+                    attr_id = key.replace('attr_', '')
+                    try:
+                        category_attribute = CategoryAttribute.objects.get(id=attr_id, category=product.category)
+                        ProductAttribute.objects.update_or_create(
+                            product=product,
+                            category_attribute=category_attribute,
+                            defaults={'value': value.strip()}
+                        )
+                    except CategoryAttribute.DoesNotExist:
+                        pass
+
         return JsonResponse({
             'status': 'success',
             'message': 'Product updated',
@@ -984,6 +1012,34 @@ class AdminCreateProductView(View):
             category=category,
             image=image,
         )
+
+        # Handle attributes if provided
+        from products.models import ProductAttribute, CategoryAttribute
+        
+        print(f"DEBUG: Processing attributes for product '{name}'")
+        print(f"DEBUG: Category: {category} (id: {category.id})")
+        print(f"DEBUG: All POST data: {dict(request.POST)}")
+        
+        for key, value in request.POST.items():
+            if key.startswith('attr_') and value.strip():
+                attr_id = key.replace('attr_', '')
+                print(f"DEBUG: Found attribute key '{key}' with value '{value}' (attr_id: {attr_id})")
+                try:
+                    category_attribute = CategoryAttribute.objects.get(id=attr_id, category=category)
+                    print(f"DEBUG: Found CategoryAttribute: {category_attribute.name} (type: {category_attribute.attribute_type})")
+                    product_attr = ProductAttribute.objects.create(
+                        product=product,
+                        category_attribute=category_attribute,
+                        value=value.strip()
+                    )
+                    print(f"DEBUG: Successfully saved ProductAttribute: {product_attr}")
+                except CategoryAttribute.DoesNotExist:
+                    print(f"DEBUG: CategoryAttribute with id {attr_id} not found for category {category}")
+                    pass  # Skip invalid attributes
+            elif key.startswith('attr_'):
+                print(f"DEBUG: Skipping empty attribute: {key} = '{value}'")
+        
+        print("DEBUG: Finished processing attributes")
 
         return JsonResponse({
             'status': 'success',
@@ -1074,6 +1130,104 @@ class AdminOrderDetailView(View):
                 'updated_at': order.updated_at.isoformat(),
             }
         })
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class AdminCategoryAttributesView(View):
+    """Get category attributes - manager only"""
+    def get(self, request, category_id):
+        user = authenticate_request(request)
+        if not user or getattr(user, 'role', None) != 'manager':
+            return JsonResponse({'status': 'error', 'message': 'Forbidden'}, status=403)
+
+        from products.models import CategoryAttribute, CategoryAttributeOption
+
+        try:
+            attributes = CategoryAttribute.objects.filter(category_id=category_id).prefetch_related('options')
+            attributes_data = []
+            for attr in attributes:
+                attr_data = {
+                    'id': attr.id,
+                    'name': attr.name,
+                    'field_type': attr.attribute_type,  # Map to frontend field name
+                    'is_required': attr.is_required,
+                    'options': [{'id': opt.id, 'value': opt.value} for opt in attr.options.all()]
+                }
+                attributes_data.append(attr_data)
+
+            return JsonResponse({
+                'status': 'success',
+                'data': {
+                    'attributes': attributes_data
+                }
+            })
+        except Exception as e:
+            return JsonResponse({'status': 'error', 'message': str(e)}, status=400)
+
+    def post(self, request, category_id):
+        """Create new category attribute"""
+        user = authenticate_request(request)
+        if not user or getattr(user, 'role', None) != 'manager':
+            return JsonResponse({'status': 'error', 'message': 'Forbidden'}, status=403)
+
+        from products.models import Category, CategoryAttribute, CategoryAttributeOption
+
+        try:
+            data, error = parse_json_body(request)
+            if error:
+                return error
+            
+            # Validate category exists
+            if not Category.objects.filter(id=category_id).exists():
+                return JsonResponse({'status': 'error', 'message': 'Category not found'}, status=404)
+
+            # Create attribute
+            attribute = CategoryAttribute.objects.create(
+                category_id=category_id,
+                name=data['name'],
+                attribute_type=data['field_type'],  # Map from frontend field name
+                is_required=data.get('is_required', False)
+            )
+
+            # Create options if select type
+            if data['field_type'] == 'select' and 'options' in data:
+                for option_value in data['options']:
+                    if option_value.strip():
+                        CategoryAttributeOption.objects.create(
+                            attribute=attribute,
+                            value=option_value.strip()
+                        )
+
+            return JsonResponse({
+                'status': 'success',
+                'data': {'id': attribute.id, 'message': 'Attribute created successfully'}
+            })
+        except Exception as e:
+            return JsonResponse({'status': 'error', 'message': str(e)}, status=400)
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class AdminDeleteCategoryAttributeView(View):
+    """Delete category attribute - manager only"""
+    def delete(self, request, category_id, attribute_id):
+        user = authenticate_request(request)
+        if not user or getattr(user, 'role', None) != 'manager':
+            return JsonResponse({'status': 'error', 'message': 'Forbidden'}, status=403)
+
+        from products.models import CategoryAttribute
+
+        try:
+            attribute = CategoryAttribute.objects.get(id=attribute_id, category_id=category_id)
+            attribute.delete()
+
+            return JsonResponse({
+                'status': 'success',
+                'data': {'message': 'Attribute deleted successfully'}
+            })
+        except CategoryAttribute.DoesNotExist:
+            return JsonResponse({'status': 'error', 'message': 'Attribute not found'}, status=404)
+        except Exception as e:
+            return JsonResponse({'status': 'error', 'message': str(e)}, status=400)
 
 
 @method_decorator(csrf_exempt, name='dispatch')

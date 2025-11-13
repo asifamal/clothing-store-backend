@@ -21,6 +21,8 @@ from .views import (
     AdminCreateProductView,
     AdminOrderDetailView,
     AdminProductVariantsView,
+    AdminCategoryAttributesView,
+    AdminDeleteCategoryAttributeView,
 )
 
 urlpatterns = [
@@ -40,6 +42,8 @@ urlpatterns = [
     path('admin/products/create/', AdminCreateProductView.as_view(), name='admin_create_product'),
     path('admin/products/<int:pk>/', AdminProductsDetailView.as_view(), name='admin_product_detail'),
     path('admin/products/<int:product_id>/variants/', AdminProductVariantsView.as_view(), name='admin_product_variants'),
+    path('admin/categories/<int:category_id>/attributes/', AdminCategoryAttributesView.as_view(), name='admin_category_attributes'),
+    path('admin/categories/<int:category_id>/attributes/<int:attribute_id>/delete/', AdminDeleteCategoryAttributeView.as_view(), name='admin_delete_category_attribute'),
     path('admin/categories/', AdminCategoriesView.as_view(), name='admin_categories'),
     path('admin/categories-all/', AdminAllCategoriesView.as_view(), name='admin_categories_all'),
     path('admin/categories/<int:pk>/', AdminCategoryDetailView.as_view(), name='admin_category_detail'),
