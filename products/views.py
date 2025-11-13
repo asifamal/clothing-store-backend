@@ -168,10 +168,48 @@ class ProductAddView(View):
 
 
 @method_decorator(csrf_exempt, name='dispatch')
-@method_decorator(jwt_required, name='dispatch')
-@method_decorator(manager_required, name='dispatch')
 class ProductDetailView(View):
-    """PUT/DELETE for product by id (manager only)"""
+    """GET/PUT/DELETE for product by id"""
+    def get(self, request, product_id):
+        """Public GET endpoint to fetch product details"""
+        try:
+            product = Product.objects.prefetch_related('variants').get(id=product_id)
+            
+            # Get variants data
+            variants_data = []
+            for variant in product.variants.all():
+                variants_data.append({
+                    'id': variant.id,
+                    'size': variant.size,
+                    'stock': variant.stock,
+                })
+            
+            return JsonResponse({
+                'status': 'success',
+                'data': {
+                    'id': product.id,
+                    'name': product.name,
+                    'description': product.description,
+                    'price': str(product.price),
+                    'stock': product.stock,
+                    'category': {
+                        'id': product.category.id,
+                        'name': product.category.name
+                    } if product.category else None,
+                    'image': product.image.url if product.image else None,
+                    'variants': variants_data,
+                    'created_at': product.created_at.isoformat(),
+                    'updated_at': product.updated_at.isoformat(),
+                }
+            })
+        except Product.DoesNotExist:
+            return JsonResponse({
+                'status': 'error',
+                'message': 'Product not found'
+            }, status=404)
+    
+    @method_decorator(jwt_required)
+    @method_decorator(manager_required)
     def put(self, request, product_id):
         data, error_response = parse_json_body(request)
         if error_response:
@@ -244,6 +282,9 @@ class ProductDetailView(View):
                 'updated_at': product.updated_at.isoformat(),
             }
         })
+    
+    @method_decorator(jwt_required)
+    @method_decorator(manager_required)
     def delete(self, request, product_id):
         try:
             product = Product.objects.get(id=product_id)

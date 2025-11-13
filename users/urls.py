@@ -8,6 +8,19 @@ from .views import (
     VerifyOTPView,
     ResetPasswordWithOTPView,
     CheckUsernameView,
+    AdminUsersView,
+    AdminUserDetailView,
+    AdminDashboardStatsView,
+    AdminOrdersView,
+    AdminProductsView,
+    AdminSalesChartView,
+    AdminAllCategoriesView,
+    AdminCategoriesView,
+    AdminCategoryDetailView,
+    AdminProductsDetailView,
+    AdminCreateProductView,
+    AdminOrderDetailView,
+    AdminProductVariantsView,
 )
 
 urlpatterns = [
@@ -18,7 +31,21 @@ urlpatterns = [
     path('verify-otp/', VerifyOTPView.as_view(), name='verify_otp'),
     path('reset-password-otp/', ResetPasswordWithOTPView.as_view(), name='reset_password_otp'),
     path('check-username/', CheckUsernameView.as_view(), name='check_username'),
+    path('admin/users/', AdminUsersView.as_view(), name='admin_users'),
+    path('admin/users/<int:pk>/', AdminUserDetailView.as_view(), name='admin_user_detail'),
+    path('admin/dashboard/stats/', AdminDashboardStatsView.as_view(), name='admin_dashboard_stats'),
+    path('admin/orders/', AdminOrdersView.as_view(), name='admin_orders'),
+    path('admin/orders/<int:pk>/', AdminOrderDetailView.as_view(), name='admin_order_detail'),
+    path('admin/products/', AdminProductsView.as_view(), name='admin_products'),
+    path('admin/products/create/', AdminCreateProductView.as_view(), name='admin_create_product'),
+    path('admin/products/<int:pk>/', AdminProductsDetailView.as_view(), name='admin_product_detail'),
+    path('admin/products/<int:product_id>/variants/', AdminProductVariantsView.as_view(), name='admin_product_variants'),
+    path('admin/categories/', AdminCategoriesView.as_view(), name='admin_categories'),
+    path('admin/categories-all/', AdminAllCategoriesView.as_view(), name='admin_categories_all'),
+    path('admin/categories/<int:pk>/', AdminCategoryDetailView.as_view(), name='admin_category_detail'),
+    path('admin/sales-chart/', AdminSalesChartView.as_view(), name='admin_sales_chart'),
     path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
 ]
+
 
 

@@ -31,3 +31,27 @@ class Product(models.Model):
     
     def __str__(self):
         return self.name
+
+
+class ProductVariant(models.Model):
+    SIZE_CHOICES = [
+        ('XS', 'Extra Small'),
+        ('S', 'Small'),
+        ('M', 'Medium'),
+        ('L', 'Large'),
+        ('XL', 'Extra Large'),
+        ('XXL', '2X Large'),
+    ]
+    
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='variants')
+    size = models.CharField(max_length=10, choices=SIZE_CHOICES)
+    stock = models.IntegerField(validators=[MinValueValidator(0)], default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        unique_together = ['product', 'size']
+        ordering = ['size']
+    
+    def __str__(self):
+        return f"{self.product.name} - {self.size}"
