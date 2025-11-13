@@ -23,6 +23,10 @@ from .views import (
     AdminProductVariantsView,
     AdminCategoryAttributesView,
     AdminDeleteCategoryAttributeView,
+    UserProfileView,
+    UserAddressesView,
+    UserAddressDetailView,
+    SetDefaultAddressView,
 )
 
 urlpatterns = [
@@ -49,6 +53,12 @@ urlpatterns = [
     path('admin/categories/<int:pk>/', AdminCategoryDetailView.as_view(), name='admin_category_detail'),
     path('admin/sales-chart/', AdminSalesChartView.as_view(), name='admin_sales_chart'),
     path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    
+    # User Profile URLs
+    path('profile/', UserProfileView.as_view(), name='user_profile'),
+    path('addresses/', UserAddressesView.as_view(), name='user_addresses'),
+    path('addresses/<int:address_id>/', UserAddressDetailView.as_view(), name='user_address_detail'),
+    path('addresses/<int:address_id>/set-default/', SetDefaultAddressView.as_view(), name='set_default_address'),
 ]
 
 

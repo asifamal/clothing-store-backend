@@ -1016,30 +1016,58 @@ class AdminCreateProductView(View):
         # Handle attributes if provided
         from products.models import ProductAttribute, CategoryAttribute
         
-        print(f"DEBUG: Processing attributes for product '{name}'")
+        print(f"DEBUG: ===== Processing attributes for product '{name}' =====")
         print(f"DEBUG: Category: {category} (id: {category.id})")
-        print(f"DEBUG: All POST data: {dict(request.POST)}")
+        print(f"DEBUG: All POST data keys: {list(request.POST.keys())}")
+        print(f"DEBUG: POST data dict: {dict(request.POST)}")
+        
+        # Check if any attr_ keys exist
+        attr_keys = [key for key in request.POST.keys() if key.startswith('attr_')]
+        print(f"DEBUG: Found {len(attr_keys)} attribute keys: {attr_keys}")
+        
+        if not attr_keys:
+            print("DEBUG: No attribute keys found in POST data")
         
         for key, value in request.POST.items():
+            print(f"DEBUG: Processing POST item: {key} = '{value}'")
             if key.startswith('attr_') and value.strip():
                 attr_id = key.replace('attr_', '')
-                print(f"DEBUG: Found attribute key '{key}' with value '{value}' (attr_id: {attr_id})")
+                print(f"DEBUG: Processing attribute - key: '{key}', value: '{value}', attr_id: '{attr_id}'")
                 try:
-                    category_attribute = CategoryAttribute.objects.get(id=attr_id, category=category)
+                    attr_id_int = int(attr_id)
+                    print(f"DEBUG: Looking for CategoryAttribute with id={attr_id_int} and category={category.id}")
+                    
+                    # Check if the category attribute exists
+                    category_attribute = CategoryAttribute.objects.get(id=attr_id_int, category=category)
                     print(f"DEBUG: Found CategoryAttribute: {category_attribute.name} (type: {category_attribute.attribute_type})")
+                    
+                    # Create the product attribute
                     product_attr = ProductAttribute.objects.create(
                         product=product,
                         category_attribute=category_attribute,
                         value=value.strip()
                     )
-                    print(f"DEBUG: Successfully saved ProductAttribute: {product_attr}")
+                    print(f"DEBUG: ✓ Successfully saved ProductAttribute: {product_attr}")
+                    
+                except ValueError as e:
+                    print(f"DEBUG: ✗ Invalid attr_id '{attr_id}': {e}")
                 except CategoryAttribute.DoesNotExist:
-                    print(f"DEBUG: CategoryAttribute with id {attr_id} not found for category {category}")
-                    pass  # Skip invalid attributes
+                    print(f"DEBUG: ✗ CategoryAttribute with id {attr_id_int} not found for category {category} (id: {category.id})")
+                    # Let's see what attributes ARE available for this category
+                    available_attrs = CategoryAttribute.objects.filter(category=category)
+                    print(f"DEBUG: Available CategoryAttributes for category {category}: {[(a.id, a.name) for a in available_attrs]}")
+                except Exception as e:
+                    print(f"DEBUG: ✗ Unexpected error processing attribute {key}: {e}")
             elif key.startswith('attr_'):
-                print(f"DEBUG: Skipping empty attribute: {key} = '{value}'")
+                print(f"DEBUG: Skipping empty/whitespace attribute: {key} = '{value}'")
         
-        print("DEBUG: Finished processing attributes")
+        print("DEBUG: ===== Finished processing attributes =====")
+        
+        # Final check - let's see what attributes were actually saved
+        saved_attrs = ProductAttribute.objects.filter(product=product)
+        print(f"DEBUG: Final check - {saved_attrs.count()} attributes saved for product {product.id}")
+        for attr in saved_attrs:
+            print(f"DEBUG: Saved: {attr.category_attribute.name} = {attr.value}")
 
         return JsonResponse({
             'status': 'success',
@@ -1312,4 +1340,355 @@ class AdminProductVariantsView(View):
             'status': 'success',
             'message': 'Variants updated',
             'data': {'variants': created_variants}
+        })
+
+
+# User Profile Views
+
+@method_decorator(csrf_exempt, name='dispatch')
+class UserProfileView(View):
+    """Get and update user profile"""
+    
+    def get(self, request):
+        """Get current user profile"""
+        user = authenticate_request(request)
+        if not user:
+            return JsonResponse({'status': 'error', 'message': 'Authentication required'}, status=401)
+        
+        from .models import UserProfile
+        
+        try:
+            profile = UserProfile.objects.get(user=user)
+            profile_data = {
+                'id': profile.id,
+                'first_name': profile.first_name,
+                'last_name': profile.last_name,
+                'date_of_birth': profile.date_of_birth.isoformat() if profile.date_of_birth else None,
+                'phone_number': profile.phone_number,
+                'avatar': profile.avatar.url if profile.avatar else None,
+                'bio': profile.bio,
+                'created_at': profile.created_at.isoformat(),
+                'updated_at': profile.updated_at.isoformat(),
+            }
+        except UserProfile.DoesNotExist:
+            # Return empty profile structure if doesn't exist
+            profile_data = {
+                'id': None,
+                'first_name': '',
+                'last_name': '',
+                'date_of_birth': None,
+                'phone_number': '',
+                'avatar': None,
+                'bio': '',
+                'created_at': None,
+                'updated_at': None,
+            }
+        
+        return JsonResponse({
+            'status': 'success',
+            'data': {
+                'user': {
+                    'id': user.id,
+                    'username': user.username,
+                    'email': user.email,
+                },
+                'profile': profile_data
+            }
+        })
+    
+    def post(self, request):
+        """Create or update user profile"""
+        user = authenticate_request(request)
+        if not user:
+            return JsonResponse({'status': 'error', 'message': 'Authentication required'}, status=401)
+        
+        from .models import UserProfile
+        
+        # Handle both JSON and multipart form data
+        if request.content_type and 'application/json' in request.content_type:
+            data, error_response = parse_json_body(request)
+            if error_response:
+                return error_response
+        else:
+            # Multipart form data (when avatar is uploaded)
+            data = request.POST.dict()
+        
+        # Get or create profile
+        profile, created = UserProfile.objects.get_or_create(user=user)
+        
+        # Update profile fields
+        if 'first_name' in data:
+            profile.first_name = data['first_name'].strip()
+        if 'last_name' in data:
+            profile.last_name = data['last_name'].strip()
+        if 'date_of_birth' in data and data['date_of_birth']:
+            from datetime import datetime
+            try:
+                profile.date_of_birth = datetime.strptime(data['date_of_birth'], '%Y-%m-%d').date()
+            except ValueError:
+                return JsonResponse({'status': 'error', 'message': 'Invalid date format. Use YYYY-MM-DD'}, status=400)
+        if 'phone_number' in data:
+            profile.phone_number = data['phone_number'].strip()
+        if 'bio' in data:
+            profile.bio = data['bio'].strip()
+        
+        # Handle avatar upload
+        if 'avatar' in request.FILES:
+            profile.avatar = request.FILES['avatar']
+        
+        profile.save()
+        
+        return JsonResponse({
+            'status': 'success',
+            'message': 'Profile updated successfully',
+            'data': {
+                'id': profile.id,
+                'first_name': profile.first_name,
+                'last_name': profile.last_name,
+                'date_of_birth': profile.date_of_birth.isoformat() if profile.date_of_birth else None,
+                'phone_number': profile.phone_number,
+                'avatar': profile.avatar.url if profile.avatar else None,
+                'bio': profile.bio,
+                'updated_at': profile.updated_at.isoformat(),
+            }
+        })
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class UserAddressesView(View):
+    """Manage user addresses"""
+    
+    def get(self, request):
+        """Get all user addresses"""
+        user = authenticate_request(request)
+        if not user:
+            return JsonResponse({'status': 'error', 'message': 'Authentication required'}, status=401)
+        
+        from .models import UserAddress
+        
+        addresses = UserAddress.objects.filter(user=user).order_by('-is_default', '-created_at')
+        addresses_data = []
+        
+        for address in addresses:
+            addresses_data.append({
+                'id': address.id,
+                'address_type': address.address_type,
+                'street_address': address.street_address,
+                'apartment_number': address.apartment_number,
+                'city': address.city,
+                'state': address.state,
+                'zip_code': address.zip_code,
+                'country': address.country,
+                'is_default': address.is_default,
+                'created_at': address.created_at.isoformat(),
+            })
+        
+        return JsonResponse({
+            'status': 'success',
+            'data': addresses_data
+        })
+    
+    def post(self, request):
+        """Create new address"""
+        user = authenticate_request(request)
+        if not user:
+            return JsonResponse({'status': 'error', 'message': 'Authentication required'}, status=401)
+        
+        from .models import UserAddress
+        
+        data, error_response = parse_json_body(request)
+        if error_response:
+            return error_response
+        
+        # Validate required fields
+        required_fields = ['address_type', 'street_address', 'city', 'state', 'zip_code']
+        for field in required_fields:
+            if not data.get(field, '').strip():
+                return JsonResponse({'status': 'error', 'message': f'{field.replace("_", " ").title()} is required'}, status=400)
+        
+        # Validate address type
+        valid_types = ['home', 'work', 'billing', 'shipping', 'other']
+        if data['address_type'] not in valid_types:
+            return JsonResponse({'status': 'error', 'message': f'Address type must be one of: {valid_types}'}, status=400)
+        
+        # If this is set as default, remove default from other addresses
+        is_default = data.get('is_default', False)
+        if is_default:
+            UserAddress.objects.filter(user=user, is_default=True).update(is_default=False)
+        
+        # Create address
+        address = UserAddress.objects.create(
+            user=user,
+            address_type=data['address_type'],
+            street_address=data['street_address'].strip(),
+            apartment_number=data.get('apartment_number', '').strip(),
+            city=data['city'].strip(),
+            state=data['state'].strip(),
+            zip_code=data['zip_code'].strip(),
+            country=data.get('country', 'United States').strip(),
+            is_default=is_default
+        )
+        
+        return JsonResponse({
+            'status': 'success',
+            'message': 'Address created successfully',
+            'data': {
+                'id': address.id,
+                'address_type': address.address_type,
+                'street_address': address.street_address,
+                'apartment_number': address.apartment_number,
+                'city': address.city,
+                'state': address.state,
+                'zip_code': address.zip_code,
+                'country': address.country,
+                'is_default': address.is_default,
+                'created_at': address.created_at.isoformat(),
+            }
+        })
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class UserAddressDetailView(View):
+    """Get, update, delete specific address"""
+    
+    def get(self, request, address_id):
+        """Get specific address"""
+        user = authenticate_request(request)
+        if not user:
+            return JsonResponse({'status': 'error', 'message': 'Authentication required'}, status=401)
+        
+        from .models import UserAddress
+        
+        try:
+            address = UserAddress.objects.get(id=address_id, user=user)
+        except UserAddress.DoesNotExist:
+            return JsonResponse({'status': 'error', 'message': 'Address not found'}, status=404)
+        
+        return JsonResponse({
+            'status': 'success',
+            'data': {
+                'id': address.id,
+                'address_type': address.address_type,
+                'street_address': address.street_address,
+                'apartment_number': address.apartment_number,
+                'city': address.city,
+                'state': address.state,
+                'zip_code': address.zip_code,
+                'country': address.country,
+                'is_default': address.is_default,
+                'created_at': address.created_at.isoformat(),
+            }
+        })
+    
+    def put(self, request, address_id):
+        """Update specific address"""
+        user = authenticate_request(request)
+        if not user:
+            return JsonResponse({'status': 'error', 'message': 'Authentication required'}, status=401)
+        
+        from .models import UserAddress
+        
+        try:
+            address = UserAddress.objects.get(id=address_id, user=user)
+        except UserAddress.DoesNotExist:
+            return JsonResponse({'status': 'error', 'message': 'Address not found'}, status=404)
+        
+        data, error_response = parse_json_body(request)
+        if error_response:
+            return error_response
+        
+        # Update fields
+        if 'address_type' in data:
+            valid_types = ['home', 'work', 'billing', 'shipping', 'other']
+            if data['address_type'] not in valid_types:
+                return JsonResponse({'status': 'error', 'message': f'Address type must be one of: {valid_types}'}, status=400)
+            address.address_type = data['address_type']
+        
+        if 'street_address' in data:
+            address.street_address = data['street_address'].strip()
+        if 'apartment_number' in data:
+            address.apartment_number = data['apartment_number'].strip()
+        if 'city' in data:
+            address.city = data['city'].strip()
+        if 'state' in data:
+            address.state = data['state'].strip()
+        if 'zip_code' in data:
+            address.zip_code = data['zip_code'].strip()
+        if 'country' in data:
+            address.country = data['country'].strip()
+        
+        # Handle default status
+        if 'is_default' in data and data['is_default']:
+            # Remove default from other addresses
+            UserAddress.objects.filter(user=user, is_default=True).update(is_default=False)
+            address.is_default = True
+        elif 'is_default' in data and not data['is_default']:
+            address.is_default = False
+        
+        address.save()
+        
+        return JsonResponse({
+            'status': 'success',
+            'message': 'Address updated successfully',
+            'data': {
+                'id': address.id,
+                'address_type': address.address_type,
+                'street_address': address.street_address,
+                'apartment_number': address.apartment_number,
+                'city': address.city,
+                'state': address.state,
+                'zip_code': address.zip_code,
+                'country': address.country,
+                'is_default': address.is_default,
+                'updated_at': address.updated_at.isoformat(),
+            }
+        })
+    
+    def delete(self, request, address_id):
+        """Delete specific address"""
+        user = authenticate_request(request)
+        if not user:
+            return JsonResponse({'status': 'error', 'message': 'Authentication required'}, status=401)
+        
+        from .models import UserAddress
+        
+        try:
+            address = UserAddress.objects.get(id=address_id, user=user)
+        except UserAddress.DoesNotExist:
+            return JsonResponse({'status': 'error', 'message': 'Address not found'}, status=404)
+        
+        address.delete()
+        
+        return JsonResponse({
+            'status': 'success',
+            'message': 'Address deleted successfully'
+        })
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class SetDefaultAddressView(View):
+    """Set an address as default"""
+    
+    def post(self, request, address_id):
+        user = authenticate_request(request)
+        if not user:
+            return JsonResponse({'status': 'error', 'message': 'Authentication required'}, status=401)
+        
+        from .models import UserAddress
+        
+        try:
+            address = UserAddress.objects.get(id=address_id, user=user)
+        except UserAddress.DoesNotExist:
+            return JsonResponse({'status': 'error', 'message': 'Address not found'}, status=404)
+        
+        # Remove default from all other addresses
+        UserAddress.objects.filter(user=user, is_default=True).update(is_default=False)
+        
+        # Set this address as default
+        address.is_default = True
+        address.save()
+        
+        return JsonResponse({
+            'status': 'success',
+            'message': 'Default address updated successfully'
         })
