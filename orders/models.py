@@ -24,6 +24,7 @@ class Order(models.Model):
     STATUS_CHOICES = [
         ('placed', 'Placed'),
         ('confirmed', 'Confirmed'),
+        ('packed', 'Packed'),
         ('dispatched', 'Dispatched'),
         ('delivered', 'Delivered'),
         ('cancelled', 'Cancelled'),
@@ -36,8 +37,45 @@ class Order(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
+    # Track when stock was reduced
+    stock_reduced = models.BooleanField(default=False)
+    
     class Meta:
         ordering = ['-created_at']
+    
+    def save(self, *args, **kwargs):
+        # Handle stock management when status changes
+        if self.pk:  # Only for existing orders (updates)
+            old_instance = Order.objects.get(pk=self.pk)
+            old_status = old_instance.status
+            new_status = self.status
+            
+            # If order is being confirmed and stock hasn't been reduced yet
+            if old_status == 'placed' and new_status == 'confirmed' and not self.stock_reduced:
+                self._reduce_stock()
+                self.stock_reduced = True
+                
+            # If order is being cancelled and stock was previously reduced
+            elif new_status == 'cancelled' and self.stock_reduced:
+                self._restore_stock()
+                self.stock_reduced = False
+                
+        super().save(*args, **kwargs)
+    
+    def _reduce_stock(self):
+        """Reduce product stock when order is confirmed"""
+        from products.models import Product
+        for item in self.items.all():
+            product = item.product
+            product.stock = max(0, product.stock - item.quantity)
+            product.save()
+    
+    def _restore_stock(self):
+        """Restore product stock when order is cancelled"""
+        for item in self.items.all():
+            product = item.product
+            product.stock += item.quantity
+            product.save()
     
     def __str__(self):
         return f"Order #{self.id} by {self.user.username} - {self.status}"

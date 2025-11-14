@@ -31,6 +31,11 @@ class Product(models.Model):
     
     def __str__(self):
         return self.name
+    
+    @property
+    def discounted_price(self):
+        """For now, return the regular price. Can be extended for discount logic later."""
+        return self.price
 
 
 class ProductVariant(models.Model):

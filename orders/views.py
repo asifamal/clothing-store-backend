@@ -8,22 +8,36 @@ from django.db import transaction
 from django.core.paginator import Paginator
 from .models import Order, OrderItem, CustomerAddress
 from cart.models import Cart, CartItem
-from users.utils import jwt_required, manager_required, parse_json_body
+from users.models import UserAddress
+from users.utils import authenticate_request, manager_required, parse_json_body
 
 
 @method_decorator(csrf_exempt, name='dispatch')
-@method_decorator(jwt_required, name='dispatch')
 class PlaceOrderView(View):
     """POST: place an order from cart"""
     def post(self, request):
+        # Authenticate user
+        user = authenticate_request(request)
+        if user is None:
+            return JsonResponse({'status': 'error', 'message': 'Authentication required'}, status=401)
         data, error_response = parse_json_body(request)
         if error_response:
             return error_response
         address_id = data.get('address_id')
         if address_id:
             try:
-                address = CustomerAddress.objects.get(id=address_id, user=request.user)
-            except CustomerAddress.DoesNotExist:
+                user_address = UserAddress.objects.get(id=address_id, user=user)
+                # Create or get corresponding CustomerAddress
+                address, created = CustomerAddress.objects.get_or_create(
+                    user=user,
+                    street_address=user_address.street,
+                    city=user_address.city,
+                    state=user_address.state,
+                    zip_code=user_address.pincode,
+                    country=user_address.country,
+                    defaults={'is_default': user_address.is_default}
+                )
+            except UserAddress.DoesNotExist:
                 return JsonResponse({
                     'status': 'error',
                     'message': 'Address not found'
@@ -40,7 +54,7 @@ class PlaceOrderView(View):
                     'message': 'Address details are required'
                 }, status=400)
             address = CustomerAddress.objects.create(
-                user=request.user,
+                user=user,
                 street_address=street_address,
                 city=city,
                 state=state,
@@ -48,7 +62,7 @@ class PlaceOrderView(View):
                 country=country
             )
         try:
-            cart = Cart.objects.prefetch_related('items__product').get(user=request.user)
+            cart = Cart.objects.prefetch_related('items__product').get(user=user)
         except Cart.DoesNotExist:
             return JsonResponse({
                 'status': 'error',
@@ -70,15 +84,15 @@ class PlaceOrderView(View):
                             'status': 'error',
                             'message': f'Insufficient stock for {product.name}. Available: {product.stock}'
                         }, status=400)
-                    item_total = product.price * cart_item.quantity
+                    item_total = product.discounted_price * cart_item.quantity
                     total_amount += item_total
                     order_items_data.append({
                         'product': product,
                         'quantity': cart_item.quantity,
-                        'price': product.price
+                        'price': product.discounted_price
                     })
                 order = Order.objects.create(
-                    user=request.user,
+                    user=user,
                     address=address,
                     total_amount=total_amount,
                     status='placed'
@@ -134,13 +148,17 @@ class PlaceOrderView(View):
             }, status=400)
 
 
-@method_decorator(jwt_required, name='dispatch')
 class CustomerOrdersView(View):
     """GET: list customer's orders"""
     def get(self, request):
+        # Authenticate user
+        user = authenticate_request(request)
+        if user is None:
+            return JsonResponse({'status': 'error', 'message': 'Authentication required'}, status=401)
+        
         page = int(request.GET.get('page', 1))
         limit = int(request.GET.get('limit', 10))
-        orders = Order.objects.filter(user=request.user).prefetch_related(
+        orders = Order.objects.filter(user=user).prefetch_related(
             'items__product', 'address'
         ).order_by('-created_at')
         paginator = Paginator(orders, limit)
@@ -166,16 +184,15 @@ class CustomerOrdersView(View):
                 'id': order.id,
                 'status': order.status,
                 'total_amount': str(order.total_amount),
-                'address': {
-                    'id': order.address.id if order.address else None,
-                    'street_address': order.address.street_address if order.address else None,
-                    'city': order.address.city if order.address else None,
-                    'state': order.address.state if order.address else None,
-                    'zip_code': order.address.zip_code if order.address else None,
-                } if order.address else None,
-                'items': items_data,
                 'created_at': order.created_at.isoformat(),
-                'updated_at': order.updated_at.isoformat()
+                'updated_at': order.updated_at.isoformat(),
+                'address': {
+                    'street': order.address.street_address if order.address else '',
+                    'city': order.address.city if order.address else '',
+                    'state': order.address.state if order.address else '',
+                    'pincode': order.address.zip_code if order.address else '',
+                } if order.address else None,
+                'items': items_data
             })
         return JsonResponse({
             'status': 'success',
@@ -193,11 +210,17 @@ class CustomerOrdersView(View):
         })
 
 
-@method_decorator(jwt_required, name='dispatch')
-@method_decorator(manager_required, name='dispatch')
 class AdminOrdersView(View):
     """GET: list all orders (manager only)"""
     def get(self, request):
+        # Authenticate user
+        user = authenticate_request(request)
+        if user is None:
+            return JsonResponse({'status': 'error', 'message': 'Authentication required'}, status=401)
+        
+        # Check if user is manager
+        if not user.is_superuser and not user.role == 'manager':
+            return JsonResponse({'status': 'error', 'message': 'Manager access required'}, status=403)
         page = int(request.GET.get('page', 1))
         limit = int(request.GET.get('limit', 10))
         status_filter = request.GET.get('status')
@@ -262,11 +285,17 @@ class AdminOrdersView(View):
 
 
 @method_decorator(csrf_exempt, name='dispatch')
-@method_decorator(jwt_required, name='dispatch')
-@method_decorator(manager_required, name='dispatch')
 class OrderStatusView(View):
     """PATCH: update order status (manager only)"""
     def patch(self, request, order_id):
+        # Authenticate user
+        user = authenticate_request(request)
+        if user is None:
+            return JsonResponse({'status': 'error', 'message': 'Authentication required'}, status=401)
+        
+        # Check if user is manager
+        if not user.is_superuser and not user.role == 'manager':
+            return JsonResponse({'status': 'error', 'message': 'Manager access required'}, status=403)
         data, error_response = parse_json_body(request)
         if error_response:
             return error_response
@@ -276,7 +305,7 @@ class OrderStatusView(View):
                 'status': 'error',
                 'message': 'status is required'
             }, status=400)
-        valid_statuses = ['placed', 'confirmed', 'dispatched', 'delivered', 'cancelled']
+        valid_statuses = ['placed', 'confirmed', 'packed', 'dispatched', 'delivered', 'cancelled']
         if status not in valid_statuses:
             return JsonResponse({
                 'status': 'error',
@@ -302,11 +331,17 @@ class OrderStatusView(View):
         })
 
 
-@method_decorator(jwt_required, name='dispatch')
-@method_decorator(manager_required, name='dispatch')
 class AdminDashboardView(View):
     """GET: admin dashboard summary (manager only)"""
     def get(self, request):
+        # Authenticate user
+        user = authenticate_request(request)
+        if user is None:
+            return JsonResponse({'status': 'error', 'message': 'Authentication required'}, status=401)
+        
+        # Check if user is manager
+        if not user.is_superuser and not user.role == 'manager':
+            return JsonResponse({'status': 'error', 'message': 'Manager access required'}, status=403)
         from django.contrib.auth import get_user_model
         from django.db.models import Count, Sum, Q
         from products.models import Product

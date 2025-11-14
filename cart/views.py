@@ -5,15 +5,42 @@ from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from .models import Cart, CartItem
 from products.models import Product
-from users.utils import jwt_required, parse_json_body
+from users.utils import authenticate_request, parse_json_body
+
+
+class TestAuthView(View):
+    """Test authentication"""
+    def get(self, request):
+        # Log what we receive
+        auth_header = request.META.get('HTTP_AUTHORIZATION', 'No auth header')
+        print(f"Auth header received: {auth_header}")
+        
+        user = authenticate_request(request)
+        if not user:
+            return JsonResponse({
+                'status': 'error', 
+                'message': 'Authentication required',
+                'debug_info': {
+                    'auth_header_present': 'HTTP_AUTHORIZATION' in request.META,
+                    'auth_header_value': auth_header[:50] if auth_header != 'No auth header' else auth_header
+                }
+            }, status=401)
+        return JsonResponse({
+            'status': 'success', 
+            'message': f'Authenticated as {user.username}',
+            'user_id': user.id
+        })
 
 
 @method_decorator(csrf_exempt, name='dispatch')
-@method_decorator(jwt_required, name='dispatch')
 class CartView(View):
     """GET: get user's cart"""
     def get(self, request):
-        cart, created = Cart.objects.get_or_create(user=request.user)
+        user = authenticate_request(request)
+        if not user:
+            return JsonResponse({'status': 'error', 'message': 'Authentication required'}, status=401)
+        
+        cart, created = Cart.objects.get_or_create(user=user)
         items_data = []
         for item in cart.items.select_related('product', 'product__category').all():
             items_data.append({
@@ -22,6 +49,7 @@ class CartView(View):
                     'id': item.product.id,
                     'name': item.product.name,
                     'price': str(item.product.price),
+                    'discounted_price': str(item.product.discounted_price),
                     'image': item.product.image.url if item.product.image else None,
                 },
                 'quantity': item.quantity,
@@ -40,10 +68,13 @@ class CartView(View):
 
 
 @method_decorator(csrf_exempt, name='dispatch')
-@method_decorator(jwt_required, name='dispatch')
 class CartAddView(View):
     """POST: add item to cart"""
     def post(self, request):
+        user = authenticate_request(request)
+        if not user:
+            return JsonResponse({'status': 'error', 'message': 'Authentication required'}, status=401)
+        
         data, error_response = parse_json_body(request)
         if error_response:
             return error_response
@@ -78,7 +109,7 @@ class CartAddView(View):
                 'status': 'error',
                 'message': f'Insufficient stock. Available: {product.stock}'
             }, status=400)
-        cart, created = Cart.objects.get_or_create(user=request.user)
+        cart, created = Cart.objects.get_or_create(user=user)
         cart_item, created = CartItem.objects.get_or_create(
             cart=cart,
             product=product,
@@ -108,10 +139,13 @@ class CartAddView(View):
 
 
 @method_decorator(csrf_exempt, name='dispatch')
-@method_decorator(jwt_required, name='dispatch')
 class CartItemView(View):
     """PUT/DELETE: update or remove specific cart item"""
     def put(self, request, item_id):
+        user = authenticate_request(request)
+        if not user:
+            return JsonResponse({'status': 'error', 'message': 'Authentication required'}, status=401)
+        
         data, error_response = parse_json_body(request)
         if error_response:
             return error_response
@@ -136,7 +170,7 @@ class CartItemView(View):
         try:
             cart_item = CartItem.objects.select_related('cart', 'product').get(
                 id=item_id,
-                cart__user=request.user
+                cart__user=user
             )
         except CartItem.DoesNotExist:
             return JsonResponse({
@@ -160,10 +194,14 @@ class CartItemView(View):
             }
         })
     def delete(self, request, item_id):
+        user = authenticate_request(request)
+        if not user:
+            return JsonResponse({'status': 'error', 'message': 'Authentication required'}, status=401)
+        
         try:
             cart_item = CartItem.objects.get(
                 id=item_id,
-                cart__user=request.user
+                cart__user=user
             )
             cart_item.delete()
             return JsonResponse({

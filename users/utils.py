@@ -37,6 +37,27 @@ def get_user_from_token(request):
         }, status=401)
 
 
+def authenticate_request(request):
+    """
+    Extract and return user from JWT token in Authorization header
+    Returns user object or None if authentication fails
+    Compatible with REST framework style
+    """
+    auth_header = request.META.get('HTTP_AUTHORIZATION', '')
+    
+    if not auth_header.startswith('Bearer '):
+        return None
+    
+    try:
+        token = auth_header.split(' ')[1]
+        validated_token = UntypedToken(token)
+        user_id = validated_token['user_id']
+        user = User.objects.get(id=user_id)
+        return user
+    except (TokenError, InvalidToken, User.DoesNotExist, IndexError):
+        return None
+
+
 def jwt_required(view_func):
     """
     Decorator to require JWT authentication
