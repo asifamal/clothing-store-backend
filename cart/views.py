@@ -53,6 +53,7 @@ class CartView(View):
                     'image': item.product.image.url if item.product.image else None,
                 },
                 'quantity': item.quantity,
+                'size': item.size,
                 'total_price': str(item.total_price)
             })
         return JsonResponse({
@@ -80,13 +81,14 @@ class CartAddView(View):
             return error_response
         product_id = data.get('product_id')
         quantity = data.get('quantity', 1)
+        size = data.get('size')  # Optional size for variants
         if not product_id:
             return JsonResponse({
                 'status': 'error',
                 'message': 'product_id is required'
             }, status=400)
         try:
-            product = Product.objects.get(id=product_id)
+            product = Product.objects.prefetch_related('variants').get(id=product_id)
         except Product.DoesNotExist:
             return JsonResponse({
                 'status': 'error',
@@ -104,23 +106,39 @@ class CartAddView(View):
                 'status': 'error',
                 'message': 'Invalid quantity value'
             }, status=400)
-        if product.stock < quantity:
+        
+        # Check stock - use variant stock if size is provided
+        if size:
+            try:
+                variant = product.variants.get(size=size)
+                available_stock = variant.stock
+            except product.variants.model.DoesNotExist:
+                return JsonResponse({
+                    'status': 'error',
+                    'message': f'Size {size} not available for this product'
+                }, status=400)
+        else:
+            available_stock = product.stock
+        
+        if available_stock < quantity:
             return JsonResponse({
                 'status': 'error',
-                'message': f'Insufficient stock. Available: {product.stock}'
+                'message': f'Insufficient stock. Available: {available_stock}'
             }, status=400)
+        
         cart, created = Cart.objects.get_or_create(user=user)
         cart_item, created = CartItem.objects.get_or_create(
             cart=cart,
             product=product,
+            size=size,
             defaults={'quantity': quantity}
         )
         if not created:
             cart_item.quantity += quantity
-            if cart_item.quantity > product.stock:
+            if cart_item.quantity > available_stock:
                 return JsonResponse({
                     'status': 'error',
-                    'message': f'Insufficient stock. Available: {product.stock}'
+                    'message': f'Insufficient stock. Available: {available_stock}'
                 }, status=400)
             cart_item.save()
         return JsonResponse({

@@ -19,14 +19,16 @@ class CartItem(models.Model):
     cart = models.ForeignKey(Cart, on_delete=models.CASCADE, related_name='items')
     product = models.ForeignKey('products.Product', on_delete=models.CASCADE)
     quantity = models.IntegerField(validators=[MinValueValidator(1)], default=1)
+    size = models.CharField(max_length=10, blank=True, null=True)  # For product variants
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
     class Meta:
-        unique_together = ['cart', 'product']
+        unique_together = ['cart', 'product', 'size']
     
     def __str__(self):
-        return f"{self.quantity}x {self.product.name} in {self.cart.user.username}'s cart"
+        size_str = f" (Size: {self.size})" if self.size else ""
+        return f"{self.quantity}x {self.product.name}{size_str} in {self.cart.user.username}'s cart"
     
     @property
     def total_price(self):
