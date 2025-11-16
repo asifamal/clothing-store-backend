@@ -48,7 +48,7 @@ INSTALLED_APPS = [
     'users',
     'products',
     'cart',
-    'orders',
+    'orders.apps.OrdersConfig',
     'filters',
 ]
 

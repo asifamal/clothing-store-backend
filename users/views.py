@@ -13,7 +13,7 @@ from django.conf import settings
 from datetime import timedelta
 from rest_framework_simplejwt.tokens import RefreshToken
 from .utils import parse_json_body
-from .models import PasswordResetOTP
+from .models import PasswordResetOTP, UserProfile
 
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from django.utils.decorators import method_decorator
@@ -76,7 +76,8 @@ class RegisterView(View):
                         'id': user.id,
                         'username': user.username,
                         'email': user.email,
-                        'role': user.role
+                        'role': user.role,
+                        'phone_number': ''
                     },
                     'tokens': {
                         'access': str(refresh.access_token),
@@ -129,6 +130,14 @@ class LoginView(View):
                 'message': 'Invalid credentials'
             }, status=401)
         
+        # Get user's profile phone number if it exists
+        phone_number = ''
+        try:
+            profile = user.profile
+            phone_number = profile.phone_number or ''
+        except UserProfile.DoesNotExist:
+            pass
+        
         refresh = RefreshToken.for_user(user)
         return JsonResponse({
             'status': 'success',
@@ -138,7 +147,8 @@ class LoginView(View):
                     'id': user.id,
                     'username': user.username,
                     'email': user.email,
-                    'role': user.role
+                    'role': user.role,
+                    'phone_number': phone_number
                 },
                 'tokens': {
                     'access': str(refresh.access_token),
@@ -1112,8 +1122,11 @@ class AdminOrderDetailView(View):
                 'id': order.id,
                 'customer': order.user.username,
                 'email': order.user.email,
+                'contact_phone': order.contact_phone or '',
                 'total_amount': float(order.total_amount),
                 'status': order.status,
+                'awb_number': order.awb_number or '',
+                'courier_partner': order.courier_partner or '',
                 'created_at': order.created_at.isoformat(),
                 'updated_at': order.updated_at.isoformat(),
                 'items': items,
@@ -1143,11 +1156,52 @@ class AdminOrderDetailView(View):
             return error_response
 
         if 'status' in data:
-            valid_statuses = ['placed', 'confirmed', 'dispatched', 'delivered', 'cancelled']
+            valid_statuses = ['pending', 'confirmed', 'dispatched', 'delivered', 'cancelled']
             if data['status'] not in valid_statuses:
-                return JsonResponse({'status': 'error', 'message': f'Invalid status. Must be one of: {valid_statuses}'}, status=400)
-            order.status = data['status']
-            order.save()
+                return JsonResponse({'status': 'error', 'message': f'Invalid status. Must be one of: {valid_statuses}'})
+            
+            # Check if trying to change a cancelled order
+            if order.status == 'cancelled':
+                return JsonResponse({
+                    'status': 'error',
+                    'message': 'Cannot change status of a cancelled order'
+                })
+            
+            # Prevent cancelling orders that are dispatched or delivered
+            if data['status'] == 'cancelled' and order.status in ['dispatched', 'delivered']:
+                return JsonResponse({
+                    'status': 'error',
+                    'message': f'Cannot cancel an order that has been {order.status}. Please contact the customer to arrange a return.'
+                })
+            
+            # If changing to dispatched, require AWB and courier partner
+            if data['status'] == 'dispatched':
+                awb_number = data.get('awb_number', '').strip()
+                courier_partner = data.get('courier_partner', '').strip()
+                
+                if not awb_number or not courier_partner:
+                    return JsonResponse({
+                        'status': 'error',
+                        'message': 'AWB number and courier partner are required for dispatch'
+                    })
+                
+                order.awb_number = awb_number
+                order.courier_partner = courier_partner
+            
+            # Try to save, catch ValidationError from signal
+            try:
+                order.status = data['status']
+                order.save()
+            except Exception as e:
+                from django.core.exceptions import ValidationError
+                if isinstance(e, ValidationError):
+                    error_message = e.messages[0] if hasattr(e, 'messages') and e.messages else str(e)
+                    return JsonResponse({
+                        'status': 'error',
+                        'message': error_message
+                    })
+                # Re-raise other exceptions
+                raise
 
         return JsonResponse({
             'status': 'success',
@@ -1442,14 +1496,23 @@ class UserProfileView(View):
             'status': 'success',
             'message': 'Profile updated successfully',
             'data': {
-                'id': profile.id,
-                'first_name': profile.first_name,
-                'last_name': profile.last_name,
-                'date_of_birth': profile.date_of_birth.isoformat() if profile.date_of_birth else None,
-                'phone_number': profile.phone_number,
-                'avatar': profile.avatar.url if profile.avatar else None,
-                'bio': profile.bio,
-                'updated_at': profile.updated_at.isoformat(),
+                'user': {
+                    'id': user.id,
+                    'username': user.username,
+                    'email': user.email,
+                    'role': user.role,
+                    'phone_number': profile.phone_number
+                },
+                'profile': {
+                    'id': profile.id,
+                    'first_name': profile.first_name,
+                    'last_name': profile.last_name,
+                    'date_of_birth': profile.date_of_birth.isoformat() if profile.date_of_birth else None,
+                    'phone_number': profile.phone_number,
+                    'avatar': profile.avatar.url if profile.avatar else None,
+                    'bio': profile.bio,
+                    'updated_at': profile.updated_at.isoformat(),
+                }
             }
         })
 

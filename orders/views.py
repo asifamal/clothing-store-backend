@@ -215,10 +215,18 @@ class PlaceOrderView(View):
             return error_response
         
         address_id = data.get('address_id')
+        contact_phone = data.get('contact_phone', '').strip()
+        
         if not address_id:
             return JsonResponse({
                 'status': 'error',
                 'message': 'Address ID is required'
+            }, status=400)
+        
+        if not contact_phone:
+            return JsonResponse({
+                'status': 'error',
+                'message': 'Contact phone number is required'
             }, status=400)
         
         # Verify that user has a verified OTP for this address
@@ -310,22 +318,20 @@ class PlaceOrderView(View):
                     user=user,
                     address=address,
                     total_amount=total_amount,
-                    status='placed'
+                    status='pending',  # Initial status is pending, waiting for admin confirmation
+                    contact_phone=contact_phone
                 )
                 for item_data in order_items_data:
                     OrderItem.objects.create(
                         order=order,
                         product=item_data['product'],
                         quantity=item_data['quantity'],
-                        price=item_data['price']
+                        price=item_data['price'],
+                        size=item_data['size']  # Store the size for variant tracking
                     )
-                    # Decrease stock - use variant stock if size was specified
-                    if item_data['variant']:
-                        item_data['variant'].stock -= item_data['quantity']
-                        item_data['variant'].save()
-                    else:
-                        item_data['product'].stock -= item_data['quantity']
-                        item_data['product'].save()
+                    # Stock will NOT be decreased here
+                    # It will be decreased when admin confirms the order (status changes to 'confirmed')
+                
                 cart.items.all().delete()
                 
                 # Generate and save invoice PDF
@@ -540,7 +546,7 @@ class OrderStatusView(View):
                 'status': 'error',
                 'message': 'status is required'
             }, status=400)
-        valid_statuses = ['placed', 'confirmed', 'packed', 'dispatched', 'delivered', 'cancelled']
+        valid_statuses = ['pending', 'confirmed', 'dispatched', 'delivered', 'cancelled']
         if status not in valid_statuses:
             return JsonResponse({
                 'status': 'error',
@@ -553,15 +559,44 @@ class OrderStatusView(View):
                 'status': 'error',
                 'message': 'Order not found'
             }, status=404)
-        order.status = status
-        order.save()
+        
+        # Prevent status changes on cancelled orders
+        if order.status == 'cancelled':
+            return JsonResponse({
+                'status': 'error',
+                'message': 'Cannot change status of a cancelled order'
+            })
+        
+        print(f"[OrderStatusView] Updating order #{order.id} from '{order.status}' to '{status}'")
+        print(f"[OrderStatusView] Stock reduced flag before: {order.stock_reduced}")
+        
+        # Try to save the order status change
+        # The signal will raise ValidationError if trying to change a cancelled order
+        try:
+            order.status = status
+            order.save()
+        except Exception as e:
+            from django.core.exceptions import ValidationError
+            if isinstance(e, ValidationError):
+                return JsonResponse({
+                    'status': 'error',
+                    'message': str(e.message) if hasattr(e, 'message') else str(e)
+                })
+            # Re-raise other exceptions
+            raise
+        
+        # Refresh from database to get updated values
+        order.refresh_from_db()
+        print(f"[OrderStatusView] Stock reduced flag after: {order.stock_reduced}")
+        
         return JsonResponse({
             'status': 'success',
             'message': 'Order status updated successfully',
             'data': {
                 'id': order.id,
                 'status': order.status,
-                'updated_at': order.updated_at.isoformat()
+                'updated_at': order.updated_at.isoformat(),
+                'stock_reduced': order.stock_reduced
             }
         })
 
@@ -605,4 +640,28 @@ class AdminDashboardView(View):
                 'orders_by_status': orders_by_status,
                 'top_products': top_products_list
             }
+        })
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class CourierPartnersView(View):
+    """GET: list all active courier partners"""
+    def get(self, request):
+        from .models import CourierPartner
+        
+        courier_partners = CourierPartner.objects.filter(is_active=True).order_by('name')
+        
+        partners_data = []
+        for partner in courier_partners:
+            partners_data.append({
+                'id': partner.id,
+                'name': partner.name,
+                'tracking_url': partner.tracking_url or '',
+                'contact_number': partner.contact_number or '',
+                'email': partner.email or ''
+            })
+        
+        return JsonResponse({
+            'status': 'success',
+            'data': partners_data
         })

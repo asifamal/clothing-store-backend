@@ -4,6 +4,25 @@ from django.utils import timezone
 from datetime import timedelta
 
 
+class CourierPartner(models.Model):
+    """Store courier partner information"""
+    name = models.CharField(max_length=100, unique=True)
+    tracking_url = models.URLField(blank=True, null=True, help_text="URL template for tracking (use {awb} as placeholder)")
+    contact_number = models.CharField(max_length=20, blank=True, null=True)
+    email = models.EmailField(blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['name']
+        verbose_name = 'Courier Partner'
+        verbose_name_plural = 'Courier Partners'
+    
+    def __str__(self):
+        return self.name
+
+
 class OrderOTP(models.Model):
     """Store OTP for order verification"""
     user = models.ForeignKey('users.User', on_delete=models.CASCADE, related_name='order_otps')
@@ -50,9 +69,8 @@ class CustomerAddress(models.Model):
 
 class Order(models.Model):
     STATUS_CHOICES = [
-        ('placed', 'Placed'),
+        ('pending', 'Pending Confirmation'),
         ('confirmed', 'Confirmed'),
-        ('packed', 'Packed'),
         ('dispatched', 'Dispatched'),
         ('delivered', 'Delivered'),
         ('cancelled', 'Cancelled'),
@@ -60,7 +78,7 @@ class Order(models.Model):
     
     user = models.ForeignKey('users.User', on_delete=models.CASCADE, related_name='orders')
     address = models.ForeignKey(CustomerAddress, on_delete=models.SET_NULL, null=True, related_name='orders')
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='placed')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     total_amount = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])
     invoice_pdf = models.CharField(max_length=500, blank=True, null=True)  # Path to invoice PDF
     created_at = models.DateTimeField(auto_now_add=True)
@@ -69,42 +87,13 @@ class Order(models.Model):
     # Track when stock was reduced
     stock_reduced = models.BooleanField(default=False)
     
+    # Shipping details
+    awb_number = models.CharField(max_length=100, blank=True, null=True)  # Air Waybill number
+    courier_partner = models.CharField(max_length=100, blank=True, null=True)
+    contact_phone = models.CharField(max_length=17, blank=True, null=True)  # Contact number for delivery
+    
     class Meta:
         ordering = ['-created_at']
-    
-    def save(self, *args, **kwargs):
-        # Handle stock management when status changes
-        if self.pk:  # Only for existing orders (updates)
-            old_instance = Order.objects.get(pk=self.pk)
-            old_status = old_instance.status
-            new_status = self.status
-            
-            # If order is being confirmed and stock hasn't been reduced yet
-            if old_status == 'placed' and new_status == 'confirmed' and not self.stock_reduced:
-                self._reduce_stock()
-                self.stock_reduced = True
-                
-            # If order is being cancelled and stock was previously reduced
-            elif new_status == 'cancelled' and self.stock_reduced:
-                self._restore_stock()
-                self.stock_reduced = False
-                
-        super().save(*args, **kwargs)
-    
-    def _reduce_stock(self):
-        """Reduce product stock when order is confirmed"""
-        from products.models import Product
-        for item in self.items.all():
-            product = item.product
-            product.stock = max(0, product.stock - item.quantity)
-            product.save()
-    
-    def _restore_stock(self):
-        """Restore product stock when order is cancelled"""
-        for item in self.items.all():
-            product = item.product
-            product.stock += item.quantity
-            product.save()
     
     def __str__(self):
         return f"Order #{self.id} by {self.user.username} - {self.status}"
@@ -115,10 +104,12 @@ class OrderItem(models.Model):
     product = models.ForeignKey('products.Product', on_delete=models.CASCADE)
     quantity = models.IntegerField(validators=[MinValueValidator(1)])
     price = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])
+    size = models.CharField(max_length=10, blank=True, null=True)  # For product variants
     created_at = models.DateTimeField(auto_now_add=True)
     
     def __str__(self):
-        return f"{self.quantity}x {self.product.name} in Order #{self.order.id}"
+        size_str = f" (Size: {self.size})" if self.size else ""
+        return f"{self.quantity}x {self.product.name}{size_str} in Order #{self.order.id}"
     
     @property
     def total_price(self):

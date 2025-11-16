@@ -6,7 +6,8 @@ from .views import (
     OrderStatusView, 
     AdminDashboardView,
     GenerateOrderOTPView,
-    VerifyOrderOTPView
+    VerifyOrderOTPView,
+    CourierPartnersView
 )
 
 urlpatterns = [
@@ -17,5 +18,6 @@ urlpatterns = [
     path('admin/', AdminOrdersView.as_view(), name='list_all_orders'),
     path('admin/<int:order_id>/status/', OrderStatusView.as_view(), name='update_order_status'),
     path('admin/dashboard/', AdminDashboardView.as_view(), name='admin_dashboard'),
+    path('courier-partners/', CourierPartnersView.as_view(), name='courier_partners'),
 ]
 
