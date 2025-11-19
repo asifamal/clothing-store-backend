@@ -59,7 +59,7 @@ def send_order_confirmation_email(email, order):
     print(f"Subject: Order Confirmation - Order #{order.id}")
     print(f"Order ID: {order.id}")
     print(f"Status: {order.status}")
-    print(f"Total Amount: ${order.total_amount}")
+    print(f"Total Amount: ₹{order.total_amount}")
     print(f"Date: {order.created_at}")
     print("\\nOrder Items:")
     for item in order.items.all():
@@ -399,7 +399,7 @@ class CustomerOrdersView(View):
         page = int(request.GET.get('page', 1))
         limit = int(request.GET.get('limit', 10))
         orders = Order.objects.filter(user=user).prefetch_related(
-            'items__product', 'address'
+            'items__product', 'items__review', 'address'
         ).order_by('-created_at')
         paginator = Paginator(orders, limit)
         try:
@@ -410,15 +410,25 @@ class CustomerOrdersView(View):
         for order in page_obj:
             items_data = []
             for item in order.items.all():
+                # Check if this item has a review
+                try:
+                    has_review = item.review is not None
+                except:
+                    has_review = False
+                
                 items_data.append({
                     'id': item.id,
+                    'product_id': item.product.id,
+                    'product_name': item.product.name,
+                    'product_image': item.product.image.url if item.product.image else None,
                     'product': {
                         'id': item.product.id,
                         'name': item.product.name,
                     },
                     'quantity': item.quantity,
                     'price': str(item.price),
-                    'total_price': str(item.total_price)
+                    'total': str(item.total_price),
+                    'has_review': has_review
                 })
             orders_data.append({
                 'id': order.id,

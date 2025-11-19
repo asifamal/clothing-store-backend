@@ -122,7 +122,7 @@ def send_dispatch_notification(order):
     print(f"\nGreat news! Your order #{order.id} has been dispatched and is on its way to you.")
     print(f"\nOrder Details:")
     print(f"  Order ID: {order.id}")
-    print(f"  Total Amount: ${order.total_amount}")
+    print(f"  Total Amount: ₹{order.total_amount}")
     print(f"  Status: Dispatched")
     
     # Shipping details
@@ -141,7 +141,7 @@ def send_dispatch_notification(order):
     print(f"\nOrder Items:")
     for item in order.items.all():
         size_info = f" (Size: {item.size})" if item.size else ""
-        print(f"  - {item.product.name}{size_info} x {item.quantity} @ ${item.price} = ${item.total_price}")
+        print(f"  - {item.product.name}{size_info} x {item.quantity} @ ₹{item.price} = ₹{item.total_price}")
     print(f"\nYou can expect delivery soon. Thank you for shopping with us!")
     print("="*50)
     print(f"\nYou can expect delivery soon. Thank you for shopping with us!")

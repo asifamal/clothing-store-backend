@@ -117,14 +117,14 @@ def generate_invoice_pdf(order):
         items_data.append([
             item.product.name,
             str(item.quantity),
-            f"${item.price}",
-            f"${item.total_price}"
+            f"₹{item.price}",
+            f"₹{item.total_price}"
         ])
     
     # Add totals
-    items_data.append(['', '', 'Subtotal:', f"${order.total_amount}"])
-    items_data.append(['', '', 'Tax:', '$0.00'])
-    items_data.append(['', '', 'Shipping:', '$0.00'])
+    items_data.append(['', '', 'Subtotal:', f"₹{order.total_amount}"])
+    items_data.append(['', '', 'Tax:', '₹0.00'])
+    items_data.append(['', '', 'Shipping:', '₹0.00'])
     
     # Create bold style for totals
     bold_style = ParagraphStyle(
@@ -138,7 +138,7 @@ def generate_invoice_pdf(order):
         '', 
         '', 
         Paragraph('<b>Total:</b>', styles['CustomBody']), 
-        Paragraph(f"<b>${order.total_amount}</b>", bold_style)
+        Paragraph(f"<b>₹{order.total_amount}</b>", bold_style)
     ])
     
     items_table = Table(items_data, colWidths=[3*inch, 1*inch, 1.5*inch, 1.5*inch])
