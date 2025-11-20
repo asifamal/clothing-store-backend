@@ -94,6 +94,19 @@ class ProductsView(View):
                     )
             except CategoryAttribute.DoesNotExist:
                 continue
+
+        # Sorting
+        sort_by = request.GET.get('sort')
+        if sort_by == 'new':
+            products = products.order_by('-created_at')
+        elif sort_by == 'price_asc':
+            products = products.order_by('price')
+        elif sort_by == 'price_desc':
+            products = products.order_by('-price')
+        elif sort_by == 'name_asc':
+            products = products.order_by('name')
+        elif sort_by == 'name_desc':
+            products = products.order_by('-name')
         
         paginator = Paginator(products, limit)
         try:
@@ -151,9 +164,7 @@ class FeaturedProductsView(View):
             limit = int(request.GET.get('limit', 8))
         except (ValueError, TypeError):
             limit = 8
-        products = Product.objects.select_related('category').annotate(
-            sold=Sum('orderitem__quantity')
-        ).order_by('-sold', '-created_at')[:limit]
+        products = Product.objects.select_related('category').order_by('-created_at')[:limit]
         products_data = []
         for product in products:
             products_data.append({
@@ -167,7 +178,6 @@ class FeaturedProductsView(View):
                     'name': product.category.name
                 },
                 'image': product.image.url if product.image else None,
-                'sold': int(product.sold or 0),
                 'created_at': product.created_at.isoformat(),
             })
         return JsonResponse({
@@ -399,10 +409,15 @@ class CategoriesView(View):
         categories = Category.objects.all()
         categories_data = []
         for category in categories:
+            # Get a representative image from the latest product in this category
+            product = category.products.filter(image__isnull=False).exclude(image='').order_by('-created_at').first()
+            image_url = product.image.url if product else None
+            
             categories_data.append({
                 'id': category.id,
                 'name': category.name,
                 'description': category.description,
+                'image': image_url,
                 'created_at': category.created_at.isoformat(),
             })
         return JsonResponse({
